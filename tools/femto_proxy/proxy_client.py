@@ -39,7 +39,6 @@ def main():
     context = zmq.Context()
     sock = context.socket(zmq.SUB)
     sock.setsockopt(zmq.RCVHWM, 1)
-    sock.setsockopt(zmq.CONFLATE, 1)
     sock.connect(args.endpoint)
 
     for topic in topics:

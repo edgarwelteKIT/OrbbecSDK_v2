@@ -271,10 +271,8 @@ int main(int argc, char **argv) try {
 
     int hwm = 1;
     int linger = 0;
-    int conflate = 1;
     zmq_setsockopt(pub, ZMQ_SNDHWM, &hwm, sizeof(hwm));
     zmq_setsockopt(pub, ZMQ_LINGER, &linger, sizeof(linger));
-    zmq_setsockopt(pub, ZMQ_CONFLATE, &conflate, sizeof(conflate));
 
     if(zmq_bind(pub, opts.bindEndpoint.c_str()) != 0) {
         const std::string err = zmq_strerror(zmq_errno());

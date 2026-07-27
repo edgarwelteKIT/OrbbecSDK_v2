@@ -7,7 +7,7 @@ It publishes:
 - `color` (RGB image, optional)
 - `pointcloud` (XYZ float32 array, optional)
 
-Transport is ZeroMQ PUB/SUB with latest-frame behavior (`HWM=1`, `CONFLATE=1`) to keep data up to date under network jitter.
+Transport is ZeroMQ PUB/SUB with low queue depth (`HWM=1`) to keep data up to date under network jitter.
 
 ## Files
 
