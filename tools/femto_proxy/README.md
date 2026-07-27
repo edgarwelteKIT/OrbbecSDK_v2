@@ -13,6 +13,7 @@ Transport is ZeroMQ PUB/SUB with low queue depth (`HWM=1`) to keep data up to da
 
 - `femto_proxy.cpp` - C++ proxy server using Orbbec SDK + ZeroMQ + zlib
 - `proxy_client.py` - Python example subscriber/decoder
+- `proxy_ros2_client.py` - Python ROS2 bridge client (publishes Image + PointCloud2 topics)
 
 ## Dependencies (Ubuntu 22)
 
@@ -29,6 +30,14 @@ On the client machine:
 python3 -m pip install pyzmq numpy
 # optional for visualization
 python3 -m pip install opencv-python
+```
+
+For ROS2 publishing client (Ubuntu 22 / ROS2 Humble):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ros-humble-ros-base ros-humble-sensor-msgs
+python3 -m pip install pyzmq numpy
 ```
 
 ## Build (proxy)
@@ -73,6 +82,28 @@ python3 /absolute/path/to/repo/tools/femto_proxy/proxy_client.py \
   --endpoint tcp://<mini-pc-ip>:5555 --show
 ```
 
+## Run ROS2 bridge client (GPU workstation or ROS2 machine)
+
+```bash
+source /opt/ros/humble/setup.bash
+python3 /absolute/path/to/repo/tools/femto_proxy/proxy_ros2_client.py \
+  --endpoint tcp://<mini-pc-ip>:5555
+```
+
+Custom ROS2 topic names / frame ids:
+
+```bash
+source /opt/ros/humble/setup.bash
+python3 /absolute/path/to/repo/tools/femto_proxy/proxy_ros2_client.py \
+  --endpoint tcp://<mini-pc-ip>:5555 \
+  --depth-topic /camera/depth/image_raw \
+  --color-topic /camera/color/image_raw \
+  --pointcloud-topic /camera/points \
+  --depth-frame-id camera_depth_optical_frame \
+  --color-frame-id camera_color_optical_frame \
+  --pointcloud-frame-id camera_depth_optical_frame
+```
+
 ## Main configuration options
 
 - `--bind`: ZeroMQ bind endpoint
@@ -87,5 +118,5 @@ python3 /absolute/path/to/repo/tools/femto_proxy/proxy_client.py \
 ## Notes
 
 - For unstable WiFi, keep `--img-downsample` and `--pc-downsample` > 1 and use `--zlib-level 1`.
-- PUB/SUB with conflation intentionally drops old frames under congestion, favoring low latency and freshness.
+- PUB/SUB with very low queue depth favors low latency and freshness under congestion.
 - Typical target is 10-20 Hz with up-to-date frames and <500 ms end-to-end latency (network dependent).
