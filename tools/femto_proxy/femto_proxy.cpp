@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -22,9 +23,17 @@ namespace {
 
 struct Options {
     std::string bindEndpoint      = "tcp://*:5555";
+    std::string deviceIp;
+    int         devicePort        = 8090;
     int         width             = 640;
     int         height            = 480;
     int         fps               = 15;
+    int         depthWidth        = 0;
+    int         depthHeight       = 0;
+    int         depthFps          = 0;
+    int         colorWidth        = 0;
+    int         colorHeight       = 0;
+    int         colorFps          = 0;
     bool        enableColor       = true;
     bool        enablePointCloud  = true;
     int         imageDownsample   = 1;
@@ -48,9 +57,17 @@ void printUsage() {
     std::cout
         << "ob_femto_proxy [options]\n"
         << "  --bind <endpoint>          ZeroMQ PUB endpoint (default tcp://*:5555)\n"
-        << "  --width <px>               Stream width (default 640)\n"
-        << "  --height <px>              Stream height (default 480)\n"
-        << "  --fps <hz>                 Stream fps target (default 15)\n"
+        << "  --device-ip <ipv4>         Select Ethernet camera by IP (optional)\n"
+        << "  --device-port <port>       Ethernet camera control port (default 8090)\n"
+        << "  --width <px>               Legacy shared width hint for depth/color (default 640)\n"
+        << "  --height <px>              Legacy shared height hint for depth/color (default 480)\n"
+        << "  --fps <hz>                 Legacy shared fps hint for depth/color (default 15)\n"
+        << "  --depth-width <px>         Requested depth width (optional)\n"
+        << "  --depth-height <px>        Requested depth height (optional)\n"
+        << "  --depth-fps <hz>           Requested depth fps (optional)\n"
+        << "  --color-width <px>         Requested color width (optional)\n"
+        << "  --color-height <px>        Requested color height (optional)\n"
+        << "  --color-fps <hz>           Requested color fps (optional)\n"
         << "  --color <true|false>       Enable color stream (default true)\n"
         << "  --pointcloud <true|false>  Enable point cloud output (default true)\n"
         << "  --img-downsample <n>       Image stride downsample factor >=1 (default 1)\n"
@@ -75,6 +92,12 @@ Options parseOptions(int argc, char **argv) {
         if(arg == "--bind") {
             opts.bindEndpoint = needValue(arg);
         }
+        else if(arg == "--device-ip") {
+            opts.deviceIp = needValue(arg);
+        }
+        else if(arg == "--device-port") {
+            opts.devicePort = std::stoi(needValue(arg));
+        }
         else if(arg == "--width") {
             opts.width = std::stoi(needValue(arg));
         }
@@ -83,6 +106,24 @@ Options parseOptions(int argc, char **argv) {
         }
         else if(arg == "--fps") {
             opts.fps = std::stoi(needValue(arg));
+        }
+        else if(arg == "--depth-width") {
+            opts.depthWidth = std::stoi(needValue(arg));
+        }
+        else if(arg == "--depth-height") {
+            opts.depthHeight = std::stoi(needValue(arg));
+        }
+        else if(arg == "--depth-fps") {
+            opts.depthFps = std::stoi(needValue(arg));
+        }
+        else if(arg == "--color-width") {
+            opts.colorWidth = std::stoi(needValue(arg));
+        }
+        else if(arg == "--color-height") {
+            opts.colorHeight = std::stoi(needValue(arg));
+        }
+        else if(arg == "--color-fps") {
+            opts.colorFps = std::stoi(needValue(arg));
         }
         else if(arg == "--color") {
             opts.enableColor = parseBool(needValue(arg));
@@ -114,11 +155,75 @@ Options parseOptions(int argc, char **argv) {
     opts.fps             = std::max(1, opts.fps);
     opts.width           = std::max(1, opts.width);
     opts.height          = std::max(1, opts.height);
+    opts.depthWidth      = std::max(0, opts.depthWidth);
+    opts.depthHeight     = std::max(0, opts.depthHeight);
+    opts.depthFps        = std::max(0, opts.depthFps);
+    opts.colorWidth      = std::max(0, opts.colorWidth);
+    opts.colorHeight     = std::max(0, opts.colorHeight);
+    opts.colorFps        = std::max(0, opts.colorFps);
+    opts.devicePort      = std::max(1, opts.devicePort);
     opts.imageDownsample = std::max(1, opts.imageDownsample);
     opts.pointDownsample = std::max(1, opts.pointDownsample);
     opts.zlibLevel       = std::max(0, std::min(9, opts.zlibLevel));
 
     return opts;
+}
+
+std::shared_ptr<ob::Sensor> findSensorByType(const std::shared_ptr<ob::Device> &device, OBSensorType sensorType) {
+    auto sensorList = device->getSensorList();
+    for(uint32_t i = 0; i < sensorList->getCount(); ++i) {
+        if(sensorList->getSensorType(i) == sensorType) {
+            return sensorList->getSensor(i);
+        }
+    }
+    return nullptr;
+}
+
+std::shared_ptr<ob::VideoStreamProfile> pickBestVideoProfile(const std::shared_ptr<ob::Sensor> &sensor,
+                                                             int                                 reqWidth,
+                                                             int                                 reqHeight,
+                                                             int                                 reqFps,
+                                                             OBFormat                            preferredFormat,
+                                                             const std::string                  &streamName) {
+    if(!sensor) {
+        throw std::runtime_error("No " + streamName + " sensor found on device");
+    }
+
+    auto profileList = sensor->getStreamProfileList();
+    std::shared_ptr<ob::VideoStreamProfile> best = nullptr;
+    long long                               bestScore = std::numeric_limits<long long>::max();
+
+    for(uint32_t i = 0; i < profileList->getCount(); ++i) {
+        auto profile = profileList->getProfile(i);
+        if(!profile->is<ob::VideoStreamProfile>()) {
+            continue;
+        }
+
+        auto video = profile->as<ob::VideoStreamProfile>();
+        long long score = 0;
+
+        const bool formatMatch = (video->getFormat() == preferredFormat);
+        score += formatMatch ? 0 : 1000000000LL;
+        score += static_cast<long long>(std::llabs(static_cast<long long>(video->getWidth()) - reqWidth)) * 1000000LL;
+        score += static_cast<long long>(std::llabs(static_cast<long long>(video->getHeight()) - reqHeight)) * 1000LL;
+        score += static_cast<long long>(std::llabs(static_cast<long long>(video->getFps()) - reqFps));
+
+        if(score < bestScore) {
+            bestScore = score;
+            best      = video;
+        }
+    }
+
+    if(!best) {
+        throw std::runtime_error("No video profiles found for " + streamName + " sensor");
+    }
+
+    return best;
+}
+
+void printSelectedProfile(const std::string &name, const std::shared_ptr<ob::VideoStreamProfile> &profile) {
+    std::cout << "Selected " << name << " profile: " << profile->getWidth() << "x" << profile->getHeight() << " @" << profile->getFps()
+              << " format=" << ob::TypeHelper::convertOBFormatTypeToString(profile->getFormat()) << std::endl;
 }
 
 std::vector<uint8_t> downsampleColorRgb(const uint8_t *src, int width, int height, int factor, int &outWidth, int &outHeight) {
@@ -237,19 +342,47 @@ std::string buildHeader(const std::string &frameType,
 
 int main(int argc, char **argv) try {
     const Options opts = parseOptions(argc, argv);
+    const int     reqDepthWidth  = opts.depthWidth > 0 ? opts.depthWidth : opts.width;
+    const int     reqDepthHeight = opts.depthHeight > 0 ? opts.depthHeight : opts.height;
+    const int     reqDepthFps    = opts.depthFps > 0 ? opts.depthFps : opts.fps;
+    const int     reqColorWidth  = opts.colorWidth > 0 ? opts.colorWidth : opts.width;
+    const int     reqColorHeight = opts.colorHeight > 0 ? opts.colorHeight : opts.height;
+    const int     reqColorFps    = opts.colorFps > 0 ? opts.colorFps : opts.fps;
 
     std::cout << "Starting Femto proxy on " << opts.bindEndpoint << std::endl;
 
+    auto context = std::make_shared<ob::Context>();
+    std::shared_ptr<ob::Device> device;
+    if(!opts.deviceIp.empty()) {
+        device = context->createNetDevice(opts.deviceIp.c_str(), static_cast<uint16_t>(opts.devicePort));
+        std::cout << "Using Ethernet camera " << opts.deviceIp << ":" << opts.devicePort << std::endl;
+    }
+    else {
+        auto deviceList = context->queryDeviceList();
+        if(deviceList->getCount() == 0) {
+            throw std::runtime_error("No camera found");
+        }
+        device = deviceList->getDevice(0);
+        std::cout << "Using first available camera" << std::endl;
+    }
+
+    auto depthSensor   = findSensorByType(device, OB_SENSOR_DEPTH);
+    auto depthProfile  = pickBestVideoProfile(depthSensor, reqDepthWidth, reqDepthHeight, reqDepthFps, OB_FORMAT_Y16, "depth");
+
     auto config = std::make_shared<ob::Config>();
-    config->enableVideoStream(OB_STREAM_DEPTH, static_cast<uint32_t>(opts.width), static_cast<uint32_t>(opts.height), static_cast<uint32_t>(opts.fps),
-                              OB_FORMAT_Y16);
+    config->enableStream(depthProfile);
+    printSelectedProfile("depth", depthProfile);
+
     if(opts.enableColor) {
-        config->enableVideoStream(OB_STREAM_COLOR, static_cast<uint32_t>(opts.width), static_cast<uint32_t>(opts.height), static_cast<uint32_t>(opts.fps),
-                                  OB_FORMAT_RGB);
+        auto colorSensor  = findSensorByType(device, OB_SENSOR_COLOR);
+        auto colorProfile = pickBestVideoProfile(colorSensor, reqColorWidth, reqColorHeight, reqColorFps, OB_FORMAT_RGB, "color");
+        config->enableStream(colorProfile);
+        printSelectedProfile("color", colorProfile);
         config->setFrameAggregateOutputMode(OB_FRAME_AGGREGATE_OUTPUT_ALL_TYPE_FRAME_REQUIRE);
     }
 
-    auto pipeline = std::make_shared<ob::Pipeline>();
+    auto pipeline = std::make_shared<ob::Pipeline>(device);
+
     if(opts.enableColor) {
         pipeline->enableFrameSync();
     }

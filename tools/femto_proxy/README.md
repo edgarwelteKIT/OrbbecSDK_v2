@@ -52,7 +52,7 @@ cmake --build build -j
 Binary:
 
 ```bash
-./build/bin/ob_femto_proxy --help
+./build/linux_x86_64/bin/ob_femto_proxy --help
 ```
 
 ## Run proxy (mini PC)
@@ -60,13 +60,17 @@ Binary:
 Example:
 
 ```bash
-./build/bin/ob_femto_proxy \
+./build/linux_x86_64/bin/ob_femto_proxy \
+  --device-ip 192.168.1.10 --device-port 8090 \
   --bind tcp://*:5555 \
-  --width 640 --height 480 --fps 15 \
+  --depth-width 640 --depth-height 400 --depth-fps 15 \
+  --color-width 1280 --color-height 800 --color-fps 15 \
   --img-downsample 2 \
   --pc-downsample 6 \
   --compress true --zlib-level 1
 ```
+
+The proxy picks the closest valid profile from the camera's supported list for depth and color independently, and prints the selected profiles at startup.
 
 ## Run example client (GPU workstation)
 
@@ -107,7 +111,11 @@ python3 /absolute/path/to/repo/tools/femto_proxy/proxy_ros2_client.py \
 ## Main configuration options
 
 - `--bind`: ZeroMQ bind endpoint
-- `--width --height --fps`: stream profile request
+- `--device-ip`: select Ethernet camera by IPv4 address (optional)
+- `--device-port`: camera control port (default `8090`)
+- `--depth-width --depth-height --depth-fps`: requested depth profile
+- `--color-width --color-height --color-fps`: requested color profile
+- `--width --height --fps`: legacy shared request used when depth/color-specific options are not set
 - `--color true|false`: enable/disable color stream
 - `--pointcloud true|false`: enable/disable point cloud stream
 - `--img-downsample N`: image stride downsampling factor
